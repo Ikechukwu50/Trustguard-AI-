@@ -126,11 +126,5 @@ MIT License - see [LICENSE](LICENSE)
 
 ---
 
-## Author
-
-**[Your Name]**  
-[LinkedIn](your-linkedin) • [Email](mailto:your-email) • [Website](your-website)
-
----
 
 Built to make compliance accessible for fintech startups. Star this repo if you find it useful! ⭐
