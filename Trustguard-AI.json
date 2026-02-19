@@ -1,0 +1,743 @@
+{
+  "name": "Trustguard-AI",
+  "nodes": [
+    {
+      "parameters": {
+        "formTitle": "KYC Application — Identity Verification",
+        "formDescription": "Please complete all fields accurately. Your information is processed securely for compliance verification.",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Full Legal Name ",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Date of Birth ",
+              "fieldType": "date",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Nationality",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "ID Card/Passport number",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "ID Card/Passport Photo ",
+              "fieldType": "file",
+              "acceptFileTypes": "image/jpeg, image/png, application/pdf",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Selfie Photo",
+              "fieldType": "file",
+              "acceptFileTypes": "image/jpeg, image/png",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Resident Address ",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Email Address ",
+              "fieldType": "email",
+              "requiredField": true
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.5,
+      "position": [
+        -224,
+        -2848
+      ],
+      "id": "ccdb924e-7663-4362-8e64-ac66cc1ac6a8",
+      "name": "On form submission",
+      "webhookId": "f1588e12-433a-444e-bc7a-35777c1b2428"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get form submission data\nconst data = $input.first().json;\n\n// Clean and normalize all fields - MATCH EXACT FORM FIELD NAMES\nconst normalized = {\n  // Identity fields\n  full_name: data['Full Legal Name']?.trim().toUpperCase() || '',\n  date_of_birth: data['Date of Birth'] || '',\n  nationality: data['Nationality']?.trim().toUpperCase() || '',\n  id_number: data['ID Card/Passport number']?.trim().toUpperCase() || '',\n  address: data['Resident Address']?.trim() || '',\n  email: data['Email Address']?.trim().toLowerCase() || '',\n\n  // Metadata\n  submission_id: 'KYC-' + Date.now(),\n  submitted_at: new Date().toISOString(),\n  status: 'PENDING',\n  channel: 'CRYPTO_FINTECH',\n\n  // Risk flags (will be populated later)\n  watchlist_hit: false,\n  adverse_media_count: 0,\n  document_verified: false,\n  face_match: false,\n  risk_score: null,\n  risk_level: null,\n  recommended_action: null,\n  flags: [],\n\n  // Age calculation\n  age: (() => {\n    if (!data['Date of Birth']) return null;\n    const dob = new Date(data['Date of Birth']);\n    const today = new Date();\n    const age = today.getFullYear() - dob.getFullYear();\n    const monthDiff = today.getMonth() - dob.getMonth();\n    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dob.getDate())) {\n      return age - 1;\n    }\n    return age;\n  })(),\n};\n\n// Basic pre-screening rules\nconst preFlags = [];\n\n// Under 18 check\nif (normalized.age !== null && normalized.age < 18) {\n  preFlags.push('UNDERAGE — Below 18 years old');\n}\n\n// High-risk nationalities (FATF grey/black list countries)\nconst highRiskCountries = [\n  'KP', 'IR', 'MM', 'SY', 'YE', 'LY', 'SO', 'SS', 'CF',\n  'NORTH KOREA', 'IRAN', 'MYANMAR', 'SYRIA', 'YEMEN',\n  'LIBYA', 'SOMALIA', 'SOUTH SUDAN', 'CENTRAL AFRICAN REPUBLIC'\n];\n\nif (highRiskCountries.some(c => normalized.nationality.includes(c))) {\n  preFlags.push('HIGH-RISK NATIONALITY — FATF grey/black list country');\n}\n\nnormalized.flags = preFlags;\nnormalized.pre_screening_passed = preFlags.length === 0;\n\nreturn [{ json: normalized }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        -2848
+      ],
+      "id": "0e6d61c0-9c00-460d-8b03-9fd3dd7d5dd4",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.opensanctions.org/match/default",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "6cae1239e3a40130fd07d98449c61733"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"queries\": {\n    \"kyc_subject\": {\n      \"schema\": \"Person\",\n      \"properties\": {\n        \"name\": [\"{{ $json.full_name }}\"],\n        \"birthDate\": [\"{{ $json.date_of_birth }}\"],\n        \"nationality\": [\"{{ $json.nationality }}\"],\n        \"idNumber\": [\"{{ $json.id_number }}\"]\n      }\n    }\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        224,
+        -2944
+      ],
+      "id": "b6c85311-3902-4e1f-a2ee-cd619a06dd1c",
+      "name": "Watchlist — OpenSanctions"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.opensanctions.org/match/default",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "6cae1239e3a40130fd07d98449c61733"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"queries\": {\n    \"id_screening\": {\n      \"schema\": \"Person\",\n      \"properties\": {\n        \"idNumber\": [\"{{ $json.id_number }}\"],\n        \"passportNumber\": [\"{{ $json.id_number }}\"],\n        \"name\": [\"{{ $json.full_name }}\"]\n      }\n    }\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        224,
+        -2752
+      ],
+      "id": "56f5d577-6575-4283-a33d-a94b5f82fae6",
+      "name": "Watchlist — OpenSanctions 2"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        448,
+        -2848
+      ],
+      "id": "88ee23d7-c073-41e7-9763-7678df704ec0",
+      "name": "Watchlist — Results"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\n// Get results from both screenings\nconst nameResults = input.results || [];\nconst idResults = input.results || [];\n\n// Check for hits above confidence threshold\nconst THRESHOLD = 0.85;\n\nconst nameHits = nameResults.filter(r => r.score >= THRESHOLD);\nconst idHits = idResults.filter(r => r.score >= THRESHOLD);\n\nconst allHits = [...nameHits, ...idHits];\nconst hasHit = allHits.length > 0;\n\n// Extract hit details\nconst hitDetails = allHits.map(hit => ({\n  matched_name: hit.caption || '',\n  score: hit.score,\n  datasets: hit.datasets || [],\n  topics: hit.properties?.topics || [],\n  countries: hit.properties?.country || [],\n  sanction_programs: hit.properties?.program || []\n}));\n\n// Determine watchlist risk level\nlet watchlistRisk = 'LOW';\nif (hasHit) {\n  const maxScore = Math.max(...allHits.map(h => h.score));\n  if (maxScore >= 0.95) watchlistRisk = 'CRITICAL';\n  else if (maxScore >= 0.90) watchlistRisk = 'HIGH';\n  else watchlistRisk = 'MEDIUM';\n}\n\n// Build flags\nconst flags = [...(input.flags || [])];\nif (hasHit) {\n  hitDetails.forEach(hit => {\n    flags.push(`WATCHLIST HIT — ${hit.matched_name} | Score: ${hit.score} | Lists: ${hit.datasets.join(', ')}`);\n  });\n}\n\nreturn [{\n  json: {\n    ...input,\n    watchlist_hit: hasHit,\n    watchlist_risk: watchlistRisk,\n    watchlist_hits: hitDetails,\n    watchlist_hit_count: allHits.length,\n    flags: flags\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        -2848
+      ],
+      "id": "827e7313-6ece-4e60-8fcc-b2be0dc04229",
+      "name": "Process Watchlist"
+    },
+    {
+      "parameters": {
+        "url": "https://newsapi.org/v2/everything",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "={{ $json.full_name }} fraud OR \"money laundering\" OR corruption OR scam OR crime"
+            },
+            {
+              "name": "Language ",
+              "value": "en"
+            },
+            {
+              "name": "sortby",
+              "value": "relevancy"
+            },
+            {
+              "name": "pageSize",
+              "value": "5"
+            },
+            {
+              "name": "apikey",
+              "value": "976ccd5b951c466cbc312c2be855aa6d"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        896,
+        -2848
+      ],
+      "id": "9d4376f6-ffac-4230-b6bf-c1dda88baac3",
+      "name": "Adverse Media — NewsAPI"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst articles = input.articles || [];\n\n// Filter only genuinely relevant articles\nconst keywords = [\n  'fraud', 'launder', 'corrupt', 'sanction', 'arrest',\n  'crime', 'scam', 'ponzi', 'terrorist', 'trafficking',\n  'bribe', 'embezzl', 'cartel', 'darknet', 'crypto theft'\n];\n\nconst relevantArticles = articles\n  .filter(a => {\n    const text = ((a.title || '') + ' ' + (a.description || '')).toLowerCase();\n    return keywords.some(kw => text.includes(kw));\n  })\n  .slice(0, 5)\n  .map(a => ({\n    title: a.title,\n    source: a.source?.name || 'Unknown',\n    published: a.publishedAt,\n    url: a.url,\n    snippet: a.description?.slice(0, 150) || ''\n  }));\n\n// Score adverse media risk\nlet mediaRisk = 'LOW';\nlet mediaFlags = [];\n\nif (relevantArticles.length >= 3) {\n  mediaRisk = 'HIGH';\n  mediaFlags.push(`ADVERSE MEDIA — ${relevantArticles.length} negative articles found`);\n} else if (relevantArticles.length >= 1) {\n  mediaRisk = 'MEDIUM';\n  mediaFlags.push(`ADVERSE MEDIA — ${relevantArticles.length} negative article(s) found`);\n}\n\n// Add article titles to flags\nrelevantArticles.forEach(a => {\n  mediaFlags.push(`MEDIA: \"${a.title}\" — ${a.source}`);\n});\n\nreturn [{\n  json: {\n    ...input,\n    adverse_media_count: relevantArticles.length,\n    adverse_media_risk: mediaRisk,\n    adverse_articles: relevantArticles,\n    flags: [...(input.flags || []), ...mediaFlags]\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        -2848
+      ],
+      "id": "aa2d7e99-e34d-47eb-852f-71339a975bfb",
+      "name": "Process Adverse Media"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\n// Get original customer data from Code in JavaScript node\nconst customerData = $('Code in JavaScript').item.json;\n\n// Get Groq's text response\nconst aiResponse = input.text || input.output || '';\n\n// Parse AI response\nlet riskAssessment;\ntry {\n  const cleaned = aiResponse\n    .replace(/```json/g, '')\n    .replace(/```/g, '')\n    .trim();\n  riskAssessment = JSON.parse(cleaned);\n} catch(e) {\n  riskAssessment = {\n    risk_score: 50,\n    risk_level: 'MEDIUM',\n    recommended_action: 'REVIEW',\n    edd_required: true,\n    pep_suspected: false,\n    reasoning: 'AI parsing error — manual review required',\n    key_concerns: ['AI response parsing failed'],\n    next_steps: ['Manual compliance review required']\n  };\n}\n\nreturn [{\n  json: {\n    // Pull customer fields directly from normalize node\n    submission_id: customerData.submission_id,\n    submitted_at: customerData.submitted_at,\n    full_name: customerData.full_name,\n    date_of_birth: customerData.date_of_birth,\n    nationality: customerData.nationality,\n    id_number: customerData.id_number,\n    address: customerData.address,\n    email: customerData.email,\n    age: customerData.age,\n    channel: customerData.channel,\n    pre_screening_passed: customerData.pre_screening_passed,\n\n    // Watchlist from Process Watchlist node\n    watchlist_hit: $('Process Watchlist').item.json.watchlist_hit,\n    watchlist_risk: $('Process Watchlist').item.json.watchlist_risk,\n    watchlist_hits: $('Process Watchlist').item.json.watchlist_hits,\n    watchlist_hit_count: $('Process Watchlist').item.json.watchlist_hit_count,\n\n    // Media from Process Adverse Media node\n    adverse_media_count: $('Process Adverse Media').item.json.adverse_media_count,\n    adverse_media_risk: $('Process Adverse Media').item.json.adverse_media_risk,\n    adverse_articles: $('Process Adverse Media').item.json.adverse_articles,\n\n    // Flags combined\n    flags: [\n      ...(customerData.flags || []),\n      ...($('Process Watchlist').item.json.flags || []),\n      ...($('Process Adverse Media').item.json.flags || [])\n    ],\n\n    // AI Assessment\n    risk_score: riskAssessment.risk_score,\n    risk_level: riskAssessment.risk_level,\n    recommended_action: riskAssessment.recommended_action,\n    edd_required: riskAssessment.edd_required,\n    pep_suspected: riskAssessment.pep_suspected,\n    ai_reasoning: riskAssessment.reasoning,\n    key_concerns: riskAssessment.key_concerns || [],\n    next_steps: riskAssessment.next_steps || [],\n\n    // Metadata\n    assessment_timestamp: new Date().toISOString(),\n    assessed_by: 'Groq-Llama-3.3-70B'\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2368,
+        -2848
+      ],
+      "id": "7fd66c0a-7578-40f3-b237-9591a6b64aac",
+      "name": "Parse AI Risk Score"
+    },
+    {
+      "parameters": {
+        "model": "llama-3.3-70b-versatile",
+        "options": {
+          "maxTokensToSample": 1000,
+          "temperature": 0.1
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGroq",
+      "typeVersion": 1,
+      "position": [
+        2096,
+        -2624
+      ],
+      "id": "3db84471-d633-44aa-9a26-aa40021dc046",
+      "name": "Groq Chat Model",
+      "credentials": {
+        "groqApi": {
+          "id": "FD5V6ZHf1dSBSgUe",
+          "name": "Groq account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "ec2fe72e-fdc2-4ee0-9fb4-cf80736c9f79",
+              "leftValue": "={{ $json.is_high_risk.toString() }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2816,
+        -2848
+      ],
+      "id": "9b60c344-c827-477d-be84-e3bebfb17898",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "sendTo": "ikechukwucmiller@gmail.com",
+        "subject": "=$('If').item.json.submission_id",
+        "message": "=🚨 KYC/AML COMPLIANCE ALERT\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n⚠️ RISK ASSESSMENT\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nRisk Level:        {{ $('If').item.json.risk_level }}\nRisk Score:        {{ $('If').item.json.risk_score }}/100\nAction Required:   {{ $('If').item.json.recommended_action }}\nSubmission ID:     {{ $('If').item.json.submission_id }}\nTimestamp:         {{ $('If').item.json.assessment_timestamp }}\n\n👤 APPLICANT INFORMATION\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nFull Name:         {{ $('If').item.json.full_name }}\nDate of Birth:     {{ $('If').item.json.date_of_birth }}\nNationality:       {{ $('If').item.json.nationality }}\nID Number:         {{ $('If').item.json.id_number }}\nEmail:             {{ $('If').item.json.email }}\nAddress:           {{ $('If').item.json.address }}\n\n🔍 SCREENING RESULTS\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nWatchlist Hit:     {{ $('If').item.json.watchlist_hit }}\nWatchlist Risk:    {{ $('If').item.json.watchlist_risk }}\nAdverse Media:     {{ $('If').item.json.adverse_media_count }} articles found\nMedia Risk:        {{ $('If').item.json.adverse_media_risk }}\nEDD Required:      {{ $('If').item.json.edd_required }}\nPEP Suspected:     {{ $('If').item.json.pep_suspected }}\n\n🤖 AI RISK ANALYSIS\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n{{ $('If').item.json.ai_reasoning }}\n\n⚠️ KEY CONCERNS\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n{{ $('If').item.json.key_concerns.map((c, i) => `${i + 1}. ${c}`).join('\\n') }}\n\n📋 RECOMMENDED NEXT STEPS\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n{{ $('If').item.json.next_steps.map((s, i) => `${i + 1}. ${s}`).join('\\n') }}\n\n🚩 FLAGS TRIGGERED\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n{{ $('If').item.json.flags.map((f, i) => `• ${f}`).join('\\n') }}\n\n📰 ADVERSE MEDIA ARTICLES\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n{{ $('If').item.json.adverse_articles.map((a, i) => `\n${i + 1}. ${a.title}\n   Source: ${a.source}\n   URL: ${a.url}\n`).join('\\n') }}\n\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nSystem: KYC-AML Automation Pipeline v1.0\nAssessed By: {{ $('If').item.json.assessed_by }}\nPlatform: Crypto Exchange / Fintech / Digital Payments\n\n⚡ This alert requires immediate compliance review\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        3040,
+        -2944
+      ],
+      "id": "f8537f82-826f-464c-aa66-a17bf95bb99d",
+      "name": "Send Risk Alert Email",
+      "webhookId": "c9618f3e-b99b-4db0-af10-357bf9ecec5d",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "zFtBXtRN8YfYJDBx",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "https://docs.google.com/spreadsheets/d/1f6dHkNYDRO9DUpgW_O4FkltisrLeOZUqNHnx_WxH6lA/edit?usp=drivesdk",
+          "mode": "url"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "kyc",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "submission_id": "={{ $json.submission_id }}"
+          },
+          "matchingColumns": [
+            "submission_id"
+          ],
+          "schema": [
+            {
+              "id": "submission_id",
+              "displayName": "submission_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        3040,
+        -2752
+      ],
+      "id": "faa22fc0-172e-441f-a86f-254743c273af",
+      "name": "Log to Audit Sheet — LOW",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "FWMP2Tj8DN4F1irb",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "mode": "url",
+          "value": "https://docs.google.com/spreadsheets/d/1f6dHkNYDRO9DUpgW_O4FkltisrLeOZUqNHnx_WxH6lA/edit?usp=drivesdk",
+          "__regex": "https:\\/\\/(?:drive|docs)\\.google\\.com(?:\\/.*|)\\/d\\/([0-9a-zA-Z\\-_]+)(?:\\/.*|)"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "kyc",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "submission_id": "={{ $('Risk Router').item.json.submission_id }}"
+          },
+          "matchingColumns": [
+            "submission_id"
+          ],
+          "schema": [
+            {
+              "id": "submission_id",
+              "displayName": "submission_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        3488,
+        -2944
+      ],
+      "id": "ecbe1a27-2469-47f5-922f-19c5adab5067",
+      "name": "Log to Audit Sheet — HIGH",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "3SAJ9XsHZNCIrTar",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\n// Generate submission_id if missing\nconst submissionId = input.submission_id || \n  input['submission_id'] || \n  'KYC-' + Date.now();\n\nconst riskLevel = (input.risk_level || '').toString().trim().toUpperCase();\nconst isHighRisk = ['HIGH', 'CRITICAL'].includes(riskLevel);\n\n// Explicitly preserve every field\nreturn [{\n  json: {\n    // Identity\n    submission_id: submissionId,\n    submitted_at: input.submitted_at || new Date().toISOString(),\n    full_name: input.full_name || '',\n    date_of_birth: input.date_of_birth || '',\n    nationality: input.nationality || '',\n    id_number: input.id_number || '',\n    address: input.address || '',\n    email: input.email || '',\n    age: input.age || null,\n    channel: input.channel || 'CRYPTO_FINTECH',\n\n    // Watchlist\n    watchlist_hit: input.watchlist_hit || false,\n    watchlist_risk: input.watchlist_risk || 'LOW',\n    watchlist_hits: input.watchlist_hits || [],\n    watchlist_hit_count: input.watchlist_hit_count || 0,\n\n    // Media\n    adverse_media_count: input.adverse_media_count || 0,\n    adverse_media_risk: input.adverse_media_risk || 'LOW',\n    adverse_articles: input.adverse_articles || [],\n\n    // Pre-screening\n    pre_screening_passed: input.pre_screening_passed || false,\n    flags: input.flags || [],\n\n    // AI Assessment\n    risk_score: input.risk_score || 0,\n    risk_level: riskLevel,\n    recommended_action: input.recommended_action || 'REVIEW',\n    edd_required: input.edd_required || false,\n    pep_suspected: input.pep_suspected || false,\n    ai_reasoning: input.ai_reasoning || '',\n    key_concerns: input.key_concerns || [],\n    next_steps: input.next_steps || [],\n\n    // Metadata\n    assessment_timestamp: input.assessment_timestamp || new Date().toISOString(),\n    assessed_by: input.assessed_by || 'Groq-Llama-3.3-70B',\n\n    // Routing\n    is_high_risk: isHighRisk,\n    routing_decision: isHighRisk ? 'ALERT' : 'LOG_ONLY'\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2592,
+        -2848
+      ],
+      "id": "1676aec5-12ec-425f-ad2d-bb859a67d4a0",
+      "name": "Risk Router"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": []
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3264,
+        -2944
+      ],
+      "id": "11bfa3e4-5ebc-443c-9d0d-9841e5c9520b",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api-us.faceplusplus.com/facepp/v3/compare",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "api_key",
+              "value": "mk9xPLID4SMUhvWowOXfEL3HcORhr8_5"
+            },
+            {
+              "name": "api_secret",
+              "value": "05rLq0aaKeZqrdgmpKXQ6ifYacnW8w6P"
+            },
+            {
+              "name": "image_url1",
+              "value": "https://raw.githubusercontent.com/ageitgey/face_recognition/master/examples/biden.jpg"
+            },
+            {
+              "name": "image_url2",
+              "value": "=https://raw.githubusercontent.com/ageitgey/face_recognition/master/examples/obama.jpg"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1568,
+        -2848
+      ],
+      "id": "888c7e6f-ec58-45ba-9b17-523d311fd506",
+      "name": "Face Match — Compare Photos"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst previousData = $('Process Adverse Media').item.json;\n\n// Initialize face match results\nlet faceMatch = false;\nlet confidence = 0;\nlet faceMatchFlags = [];\n\n// Check if Face++ API succeeded\nif (input.confidence !== undefined) {\n  confidence = input.confidence;\n  \n  // Face++ threshold: 80+ = same person\n  faceMatch = confidence >= 80;\n  \n  if (confidence >= 80) {\n    // High confidence match - PASS\n    faceMatchFlags.push(`✅ FACE MATCH — Verified: ${confidence.toFixed(1)}% confidence`);\n  } else if (confidence >= 60 && confidence < 80) {\n    // Medium confidence - WARNING\n    faceMatchFlags.push(`⚠️ FACE MATCH — Low confidence: ${confidence.toFixed(1)}% (threshold: 80%)`);\n  } else {\n    // Low confidence - FAIL\n    faceMatchFlags.push(`❌ FACE MATCH — FAILED: ${confidence.toFixed(1)}% confidence. Selfie doesn't match ID photo.`);\n  }\n} else if (input.error_message) {\n  // API error\n  faceMatchFlags.push(`❌ FACE MATCH — Error: ${input.error_message}`);\n  confidence = 0;\n} else if (input.faces1 === 0 || input.faces2 === 0) {\n  // No face detected\n  faceMatchFlags.push('❌ FACE MATCH — No face detected in one or both photos');\n  confidence = 0;\n} else {\n  // Unknown error\n  faceMatchFlags.push('❌ FACE MATCH — Unable to process images');\n  confidence = 0;\n}\n\n// Return combined data\nreturn [{\n  json: {\n    ...previousData,\n    face_match: faceMatch,\n    face_match_confidence: confidence,\n    face_match_thresholds: input.thresholds || {},\n    flags: [...(previousData.flags || []), ...faceMatchFlags]\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1792,
+        -2848
+      ],
+      "id": "6c07e01e-191c-4088-8e7c-a05882646d76",
+      "name": "Process Face Match"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are a senior KYC/AML compliance analyst for a crypto exchange and fintech platform.\n\nAnalyze this customer screening data and produce a risk assessment:\n\nCUSTOMER DATA:\n- Full Name: {{ $json.full_name }}\n- Date of Birth: {{ $json.date_of_birth }}\n- Age: {{ $json.age }}\n- Nationality: {{ $json.nationality }}\n- ID Number: {{ $json.id_number }}\n- Address: {{ $json.address }}\n- Email: {{ $json.email }}\n- Submission ID: {{ $json.submission_id }}\n- Submitted At: {{ $json.submitted_at }}\n\nSCREENING RESULTS:\n- Pre-screening passed: {{ $json.pre_screening_passed }}\n- Watchlist hit: {{ $json.watchlist_hit }}\n- Watchlist risk level: {{ $json.watchlist_risk }}\n- Watchlist hits: {{ JSON.stringify($json.watchlist_hits) }}\n- Adverse media count: {{ $json.adverse_media_count }}\n- Adverse media risk: {{ $json.adverse_media_risk }}\n- Adverse articles: {{ JSON.stringify($json.adverse_articles) }}\n\nBIOMETRIC VERIFICATION:\n- Face match verified: {{ $json.face_match }}\n- Face match confidence: {{ $json.face_match_confidence }}%\n- Match threshold: 80%\n- Status: {{ $json.face_match ? 'PASS - Selfie matches ID photo' : 'FAIL - Selfie does not match ID photo or low confidence' }}\n\nFLAGS TRIGGERED:\n{{ JSON.stringify($json.flags) }}\n\nREGULATORY CONTEXT:\n- Platform type: Crypto Exchange / Fintech / Digital Payments\n- Applicable regulations: FATF, FinCEN (US), FCA (UK), MiCA (EU), AMLD6\n- Enhanced Due Diligence required for: PEPs, high-risk countries, large transactions, biometric failures\n- Face match requirement: Minimum 80% confidence required for identity verification\n\nRISK ASSESSMENT GUIDELINES:\n- CRITICAL (90-100): Immediate rejection required - sanctions hit, failed biometrics, or serious criminal links\n- HIGH (70-89): Manual review required - low face match, adverse media, or multiple flags\n- MEDIUM (40-69): Enhanced monitoring - minor concerns or single flag\n- LOW (0-39): Standard onboarding - clean screening results\n\nRespond ONLY with valid JSON in this exact format, no extra text:\n{\n  \"risk_score\": <number 0-100>,\n  \"risk_level\": \"<LOW|MEDIUM|HIGH|CRITICAL>\",\n  \"recommended_action\": \"<APPROVE|REVIEW|REJECT>\",\n  \"edd_required\": <true|false>,\n  \"pep_suspected\": <true|false>,\n  \"reasoning\": \"<2-3 sentence professional compliance summary explaining the risk level, key concerns, and biometric verification result>\",\n  \"key_concerns\": [\"<concern 1>\", \"<concern 2>\", \"<concern 3>\"],\n  \"next_steps\": [\"<step 1>\", \"<step 2>\", \"<step 3>\"]\n}\n\nIMPORTANT RULES:\n- If face_match is false or confidence < 80%: Automatically set risk_level to at least HIGH and edd_required to true\n- If watchlist_hit is true: Automatically set risk_level to CRITICAL and recommended_action to REJECT\n- If adverse_media_count >= 3: Set risk_level to at least HIGH\n- Always mention biometric verification result in your reasoning\n- Be specific about which flags triggered the risk level",
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        2016,
+        -2848
+      ],
+      "id": "7e1f38fd-f5c7-4156-9a35-9f70b23e5c04",
+      "name": "Groq — Risk Scoring Agent"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst formData = $('On form submission').first();\n\nlet idPhotoBase64 = '';\nlet selfieBase64 = '';\n\ntry {\n  if (formData.binary && formData.binary['ID Card/Passport Photo']) {\n    const idPhoto = formData.binary['ID Card/Passport Photo'];\n    // n8n stores binary data, we need to convert to base64 string\n    idPhotoBase64 = idPhoto.data;\n  }\n  \n  if (formData.binary && formData.binary['Selfie Photo']) {\n    const selfie = formData.binary['Selfie Photo'];\n    selfieBase64 = selfie.data;\n  }\n} catch(e) {\n  console.error('Error preparing images:', e);\n}\n\nreturn [{\n  json: {\n    ...input,\n    id_photo_base64: idPhotoBase64,\n    selfie_base64: selfieBase64,\n    has_both_photos: !!(idPhotoBase64 && selfieBase64)\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        -2848
+      ],
+      "id": "9de8e98f-434a-4854-8d02-493fafd27634",
+      "name": "Prepare Face Match Images"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "On form submission": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Watchlist — OpenSanctions",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Watchlist — OpenSanctions 2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Watchlist — OpenSanctions": {
+      "main": [
+        [
+          {
+            "node": "Watchlist — Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Watchlist — OpenSanctions 2": {
+      "main": [
+        [
+          {
+            "node": "Watchlist — Results",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Watchlist — Results": {
+      "main": [
+        [
+          {
+            "node": "Process Watchlist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Watchlist": {
+      "main": [
+        [
+          {
+            "node": "Adverse Media — NewsAPI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Adverse Media — NewsAPI": {
+      "main": [
+        [
+          {
+            "node": "Process Adverse Media",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Adverse Media": {
+      "main": [
+        [
+          {
+            "node": "Prepare Face Match Images",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Groq — Risk Scoring Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Risk Score": {
+      "main": [
+        [
+          {
+            "node": "Risk Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Send Risk Alert Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log to Audit Sheet — LOW",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Risk Alert Email": {
+      "main": [
+        [
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Risk Router": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Log to Audit Sheet — HIGH",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Face Match — Compare Photos": {
+      "main": [
+        [
+          {
+            "node": "Process Face Match",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Face Match": {
+      "main": [
+        [
+          {
+            "node": "Groq — Risk Scoring Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq — Risk Scoring Agent": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Risk Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Face Match Images": {
+      "main": [
+        [
+          {
+            "node": "Face Match — Compare Photos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "b2ac1b7a-8e50-415e-985f-912927b9fdc2",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "ab6753cbb8b8061d26964eab9066cec82fe408aa3def6e998499d4b706eeb2bd"
+  },
+  "id": "rUu_5OmZsykkhW7a088-C",
+  "tags": []
+}
